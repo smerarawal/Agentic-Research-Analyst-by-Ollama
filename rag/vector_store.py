@@ -20,9 +20,14 @@ def add_documents(documents):
 
 def retrieve(query):
 
+    count = collection.count()
+
+    if count == 0:
+        return {"documents": [["No context available yet."]]}
+
     results = collection.query(
         query_texts=[query],
-        n_results=3
+        n_results=min(3, count)  
     )
 
     return results
