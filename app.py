@@ -159,7 +159,8 @@ if st.button("Run Research"):
                 query=query,
                 extracted_data=extracted,
                 critique=critique,
-                previous_report=st.session_state.last_report
+                previous_report=st.session_state.last_report,
+                search_results=all_results
             )
 
             st.session_state.last_report = final_report
