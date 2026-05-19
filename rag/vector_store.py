@@ -8,6 +8,7 @@ import chromadb
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 
 
+#local embedding
 embedding_fn = OllamaEmbeddingFunction(
     url="http://localhost:11434/api/embeddings",
     model_name="nomic-embed-text"
