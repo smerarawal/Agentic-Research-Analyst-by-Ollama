@@ -1,17 +1,17 @@
 # Agentic Research Analyst
 
-A multi-agent research system that takes a research question, searches the web, extracts structured insights, critiques its own findings, and generates a professional report — all running on local LLMs via Ollama.
+A multi-agent research system that takes a research question, searches the web, extracts structured insights, critiques its own findings, and generates a professional report — all running on local LLMs via Ollama with no external API dependencies in the core pipeline.
 
 ---
 
 ## What it does
 
-1. **Planner** — breaks your query into specific, searchable tasks
-2. **Search** — queries DuckDuckGo and scrapes full page content from open sources
-3. **Extractor** — pulls concrete facts from scraped content using RAG (ChromaDB)
-4. **Critic** — identifies gaps, unsupported claims, and missing angles
-5. **Report Generator** — synthesises everything into a structured 6-section report
-6. **Follow-up support** — subsequent queries build on the previous report's context
+1. **Planner** — breaks your query into 4 specific, searchable tasks
+2. **Researcher** — extracts concrete facts from pre-fetched web content using RAG
+3. **Critic** — identifies gaps, unsupported claims, and missing angles
+4. **Reporter** — synthesises everything into a structured 6-section report
+5. **Follow-up support** — subsequent queries build on the previous report's context, restored from disk on startup
+6. **Google Drive export** — saves report to Drive via MCP (requires Anthropic API key)
 
 ---
 
@@ -20,26 +20,26 @@ A multi-agent research system that takes a research question, searches the web, 
 ```
 agentic-research-analyst/
 │
-├── app.py                  # Streamlit UI and pipeline orchestration
-├── memory.py               # In-session memory store
-├── workflow.py             # LangGraph workflow definition
-├── pyproject.toml          # Dependencies (managed with UV)
+├── app.py                        # Streamlit UI and pipeline orchestration
+├── memory.py                     # Persistent JSON-based memory store
+├── pyproject.toml                # Dependencies (managed with UV)
+│
+├── crew/
+│   ├── agents.py                 # CrewAI agent definitions
+│   ├── tasks.py                  # Task descriptions and format rules
+│   └── research_crew.py          # Crew orchestration and web fetch
 │
 ├── agents/
-│   ├── planner.py          # Breaks query into search tasks
-│   ├── search_agent.py     # DuckDuckGo search + domain scoring
-│   ├── extractor.py        # Web scraping + fact extraction
-│   ├── critic.py           # Critiques extracted findings
-│   ├── report_generator.py # Final report synthesis
-│   └── clarification_agent.py  # Blocks vague queries
+│   └── clarification_agent.py    # Blocks vague queries before crew runs
 │
 ├── utils/
-│   ├── ollama_client.py    # Shared Ollama wrapper
-│   ├── web_scraper.py      # BeautifulSoup page scraper
-│   └── json_parser.py      # Safe JSON parsing with retry
+│   ├── ollama_client.py          # Shared Ollama wrapper
+│   ├── web_scraper.py            # BeautifulSoup page scraper
+│   ├── json_parser.py            # Safe JSON parsing with retry
+│   └── drive_saver.py            # Google Drive export via Anthropic MCP
 │
 └── rag/
-    └── vector_store.py     # ChromaDB add and retrieve
+    └── vector_store.py           # ChromaDB with local nomic-embed-text embeddings
 ```
 
 ---
@@ -51,8 +51,9 @@ agentic-research-analyst/
 - The following models pulled in Ollama:
 
 ```bash
-ollama pull llama3
-ollama pull mistral
+ollama pull llama3.1        # researcher and critic (better tool-use than llama3)
+ollama pull mistral         # planner and reporter (reliable structured output)
+ollama pull nomic-embed-text  # local embeddings for RAG
 ```
 
 ---
@@ -70,7 +71,14 @@ pip install uv
 # 3. Create venv and install dependencies
 uv sync
 
-# 4. Run the app
+# 4. Set Ollama context window (run before ollama serve every time,
+#    or set permanently in Windows system environment variables)
+set OLLAMA_NUM_CTX=16384
+
+# 5. Start Ollama in one terminal
+ollama serve
+
+# 6. Run the app in a second terminal
 streamlit run app.py
 ```
 
@@ -79,53 +87,71 @@ streamlit run app.py
 ## Usage
 
 1. Open the Streamlit app in your browser (default: `http://localhost:8501`)
-2. Enter a specific research query
-3. Click **Run Research**
-4. For follow-ups, enter a new query — the previous report is carried forward as context
+2. Enter a specific research query and click **Run Research**
+3. View per-agent outputs in the expandable sections
+4. Download the report or save to Google Drive
+5. For follow-ups, enter a new query — previous context is shown at the top and carried forward automatically
 
 ### Query tips
 
 | Too vague — will be blocked | Specific enough — will run |
 |---|---|
-| `analyze NVIDIA` | `NVIDIA AI chip strategy in data center market 2024` |
+| `analyze NVIDIA` | `NVIDIA Blackwell GPU data center deployment 2024` |
 | `research Apple` | `Apple Vision Pro enterprise adoption and competitor comparison` |
 | `study Tesla` | `Tesla FSD regulatory approval timeline and safety record` |
 
 ---
 
-## Models used
+## Models and roles
 
 | Agent | Model | Why |
 |---|---|---|
-| Planner, Clarification | `mistral` | Reliable structured JSON output |
-| Extractor, Critic, Report | `llama3` | Stronger long-form reasoning |
+| Planner | `mistral` | Reliable structured output and JSON formatting |
+| Researcher | `llama3.1` | Better tool-use support than base llama3 |
+| Critic | `llama3.1` | Stronger analytical reasoning |
+| Reporter | `mistral` | Consistent structured report formatting |
+| Embeddings | `nomic-embed-text` | Local semantic embeddings, no API key needed |
 
 ---
 
 ## Key design decisions
 
-**Why local LLMs?**
-No API costs, no data leaving your machine, and a good forcing function for writing prompts that work reliably without hosted-model quality crutches.
+**Why pre-fetch content instead of tool calling?**
+Local models (llama3, mistral) misformat tool call arguments when used via CrewAI, causing repeated failures. Web content is fetched and scraped before the crew starts, then passed directly into the task. llama3.1 has improved tool-use support and may restore autonomous tool calling — swap it in and test if needed.
 
-**Why parallel scraping?**
-Sequential scraping at 5 pages × timeout = significant wall time. `ThreadPoolExecutor` runs all page fetches simultaneously, cutting scrape time from ~20s to ~4s.
+**Why local embeddings for RAG?**
+CrewAI's built-in memory (`memory=True`) defaults to OpenAI embeddings. Using `nomic-embed-text` via Ollama achieves the same semantic retrieval with no external API dependency. Scraped content is chunked at 300 words with 30-word overlap and embedded into ChromaDB on each run.
 
-**Why ChromaDB for RAG?**
-Extracted text is embedded and stored each run, then retrieved semantically when generating the report. This means the report generator gets the most relevant chunks rather than blindly using everything — important when scraped content is noisy.
+**Why persistent JSON memory?**
+The original in-memory list reset on every browser refresh. The JSON store writes each report to disk with a timestamp and query label, so follow-up context survives restarts. A **Clear Memory** button in the UI wipes the file for fresh sessions.
 
-**Why mistral for the planner?**
-Mistral follows JSON format instructions more consistently than llama3 on structured output tasks. The planner and clarification agent both need reliable JSON — everything else benefits from llama3's stronger reasoning.
+**Why OLLAMA_NUM_CTX=16384?**
+The default Ollama context window is 4096 tokens. Research prompts with scraped content regularly exceed this, causing 600s timeouts. Setting 16384 gives the model 4× the room without needing to cut content as aggressively.
+
+**Why mistral for the reporter?**
+Mistral follows structured format instructions more consistently than llama3 for the final report. llama3 tends to leak chain-of-thought prefixes (`"I now can give a great answer"`) as its output — mistral produces clean structured text.
 
 ---
 
 ## Limitations
 
-- Memory resets on browser refresh (in-session only)
-- Paywalled sites (Reuters, Bloomberg, WSJ) return empty content — the pipeline falls back to DuckDuckGo snippets for those
-- Local model output quality is lower than GPT-4/Claude for complex synthesis — prompt specificity matters a lot
-- ChromaDB runs in-memory, so RAG context does not persist across runs
+- Tool calling is unreliable with base llama3/mistral — llama3.1 improves this but GPT-4 handles it most reliably
+- Paywalled sites (Reuters, Bloomberg, WSJ) return empty content — pipeline falls back to DuckDuckGo snippets
+- Google Drive export requires an Anthropic API key with active credits
+- ChromaDB runs in-memory within each session — embeddings do not persist across server restarts
+- Local inference on CPU takes 2–3 minutes per full run
 
 ---
+
+## Built with
+
+- [Streamlit](https://streamlit.io) — UI
+- [CrewAI](https://www.crewai.com) — multi-agent orchestration
+- [Ollama](https://ollama.com) — local LLM inference
+- [ChromaDB](https://www.trychroma.com) — vector store for RAG
+- [ddgs](https://pypi.org/project/ddgs/) — DuckDuckGo search
+- [BeautifulSoup4](https://pypi.org/project/beautifulsoup4/) — web scraping
+- [UV](https://github.com/astral-sh/uv) — package management
 
 ## Built with
 
