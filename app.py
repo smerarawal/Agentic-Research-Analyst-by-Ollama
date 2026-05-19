@@ -42,7 +42,7 @@ col1, col2 = st.columns([4, 1])
 
 with col1:
     if st.session_state.last_report:
-        st.info(f"✓ Previous context loaded: \"{st.session_state.last_query}\"")
+        st.info(f"Previous context loaded: \"{st.session_state.last_query}\"")
     else:
         st.caption("No previous context — first query will start fresh.")
 
