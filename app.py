@@ -1,13 +1,8 @@
 import streamlit as st
 
-from agents.planner import planner_agent
-from agents.search_agent import search_web
-from agents.extractor import extract_information
-from agents.critic import critic_agent
-from agents.report_generator import generate_final_report
+from crew.research_crew import run_research_crew
 from agents.clarification_agent import needs_clarification
-
-from memory import save_memory, get_memory
+from memory import save_memory, get_memory, get_last_report, clear_memory
 
 
 st.set_page_config(
@@ -17,30 +12,56 @@ st.set_page_config(
 
 st.title("Agentic Research Analyst")
 
+# session initiate
+# restore last report from persistent memory so
+# follow-up context survives page refresh
 if "last_report" not in st.session_state:
-    st.session_state.last_report = ""
+    st.session_state.last_report = get_last_report()
 if "last_query" not in st.session_state:
     st.session_state.last_query = ""
+if "last_plan" not in st.session_state:
+    st.session_state.last_plan = ""
+if "last_extracted" not in st.session_state:
+    st.session_state.last_extracted = ""
+if "last_critique" not in st.session_state:
+    st.session_state.last_critique = ""
 
 st.write(
     """
     Multi-agent research system using:
-    - Local LLMs
-    - RAG
-    - Memory
-    - Structured outputs
-    """
+    - Local LLMs via Ollama
+    - CrewAI agent orchestration
+    - RAG with local embeddings (nomic-embed-text)
+    - Persistent memory across sessions
+    - A2A communication via task context
+    """ 
 )
 
-# Shows whether previous context is loaded
-if st.session_state.last_report:
-    st.info(f"✓ Previous context loaded: \"{st.session_state.last_query}\"")
-else:
-    st.caption("No previous context — first query will start fresh.")
+# context
+col1, col2 = st.columns([4, 1])
 
+with col1:
+    if st.session_state.last_report:
+        st.info(f"✓ Previous context loaded: \"{st.session_state.last_query}\"")
+    else:
+        st.caption("No previous context — first query will start fresh.")
+
+with col2:
+    if st.session_state.last_report:
+        if st.button("🗑 Clear Memory"):
+            clear_memory()
+            st.session_state.last_report  = ""
+            st.session_state.last_query   = ""
+            st.session_state.last_plan    = ""
+            st.session_state.last_extracted = ""
+            st.session_state.last_critique  = ""
+            st.success("Memory cleared.")
+            st.rerun()
+
+# query input
 query = st.text_input(
     "Enter Research Query",
-    placeholder="Analyze NVIDIA AI strategy in data center chips"
+    placeholder="NVIDIA Blackwell GPU data center deployment 2024"
 )
 
 if st.button("Run Research"):
@@ -54,112 +75,66 @@ if st.button("Run Research"):
             """
             Query is too broad.
 
-            Please specify:
+            Please specify one of:
             - financial analysis
             - partnerships
             - AI products
             - acquisitions
+            - competitive landscape
+            - technical specifications
             """
         )
         st.stop()
 
-    with st.spinner("Planning tasks..."):
+    with st.spinner("Running research crew"):
         try:
-            plan = planner_agent(query)
-        except Exception as e:
-            st.error(f"Planner failed: {e}")
-            st.stop()
-
-    st.subheader("Research Plan")
-    st.json(plan)
-
-    # Search phase
-    all_results = []
-
-    with st.spinner("Searching sources..."):
-        try:
-            for task in plan["tasks"]:
-                results = search_web(
-                    f"{query} {task}"
-                )
-                all_results.extend(results)
-        except Exception as e:
-            st.error(f"Search failed: {e}")
-            st.stop()
-
-    st.subheader("Retrieved Sources")
-
-    with st.expander("View Retrieved Sources"):
-        for idx, result in enumerate(all_results[:5]):
-            st.write(f"Title: {result['title']}")
-            st.write(f"Snippet: {result['snippet']}")
-            st.write(f"Link: {result['link']}")
-            st.write("---")
-
-    # Extraction phase
-    with st.spinner("Extracting insights..."):
-        try:
-            extracted = extract_information(
-                all_results,
-                query
-            )
-            save_memory(extracted)
-        except Exception as e:
-            st.error(f"Extraction failed: {e}")
-            st.stop()
-
-    st.subheader("Extracted Insights")
-    st.write(extracted)
-
-    # Critique phase
-    with st.spinner("Critiquing findings..."):
-        try:
-            critique = critic_agent(extracted)
-            save_memory(critique)
-        except Exception as e:
-            st.error(f"Critique failed: {e}")
-            st.stop()
-
-    st.subheader("Critique")
-
-    if not critique:
-        st.warning("Critic returned empty response")
-    else:
-        st.write(critique)
-
-    # Report generation
-    with st.spinner("Generating report..."):
-        try:
-            final_report = generate_final_report(
+            report = run_research_crew(
                 query=query,
-                extracted_data=extracted,
-                critique=critique,
-                previous_report=st.session_state.last_report,
-                search_results=all_results
+                previous_report=st.session_state.last_report
             )
 
-            # Save to session state for follow-up queries
-            st.session_state.last_report = final_report
-            st.session_state.last_query = query
+            st.session_state.last_report = report
+            st.session_state.last_query  = query
 
-            save_memory(final_report)
+            # Save to persistent memory with query label
+            save_memory(report, query=query)
 
         except Exception as e:
-            st.error(f"Report generation failed: {e}")
+            st.error(f"Crew failed: {e}")
             st.stop()
+
+    # per agent output
+    with st.expander("Research Plan"):
+        st.caption("Tasks generated by the Planner agent")
+        st.write(st.session_state.get("last_plan", "Not available"))
+
+    with st.expander("Extracted Findings"):
+        st.caption("Facts pulled by the Researcher agent")
+        st.write(st.session_state.get("last_extracted", "Not available"))
+
+    with st.expander("Critique"):
+        st.caption("Gaps identified by the Critic agent")
+        critique = st.session_state.get("last_critique", "")
+        if not critique or critique.strip() == "I now can give a great answer":
+            st.warning("Critic returned an empty or invalid response.")
+        else:
+            st.write(critique)
 
     st.subheader("Final Report")
-    st.write(final_report)
+    st.write(report)
 
-    # Memory display
-    st.subheader("Memory")
-    memory_data = get_memory()
-    st.write(memory_data)
+    # memory
+    with st.expander("Session Memory (all runs)"):
+        memory_data = get_memory()
+        for entry in reversed(memory_data):
+            st.markdown(f"**{entry.get('timestamp', '')}** — {entry.get('query', '')}")
+            st.write(entry.get("content", "")[:300] + "...")
+            st.write("---")
 
-    # Download option
+    # download
     st.download_button(
         label="Download Report",
-        data=final_report,
+        data=report,
         file_name="research_report.txt",
         mime="text/plain"
     )
