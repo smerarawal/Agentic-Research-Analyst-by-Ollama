@@ -1,17 +1,17 @@
-# Agentic Research Analyst
+# Local Research Analyst
 
-A multi-agent research system that takes a research question, searches the web, extracts structured insights, critiques its own findings, and generates a professional report — all running on local LLMs via Ollama with no external API dependencies in the core pipeline.
+A local Ollama research prototype that plans web searches, extracts claims with source quotes, asks a critic to find gaps, and writes a cited report. Automated checks reduce some errors but do not prove that a report is true.
 
 ---
 
 ## What it does
 
-1. **Planner** — breaks your query into 4 specific, searchable tasks
-2. **Researcher** — extracts concrete facts from pre-fetched web content using RAG
-3. **Critic** — identifies gaps, unsupported claims, and missing angles
-4. **Reporter** — synthesises everything into a structured 6-section report
-5. **Follow-up support** — subsequent queries build on the previous report's context, restored from disk on startup
-6. **Google Drive export** — saves report to Drive via MCP (requires Anthropic API key)
+1. **Clarify and plan** — vague queries can end with a question; specific queries become searchable sub-questions.
+2. **Search and retrieve** — search results are cached, pages are checked against `robots.txt`, and text is indexed in a per-run Chroma collection.
+3. **Extract evidence** — Ollama returns claims with source IDs and exact quotes; code drops quotes absent from retrieved text.
+4. **Critique loop** — the critic can request up to two additional search rounds.
+5. **Write and check** — code checks source IDs, headings, quote-backed claims, and numbers. A failed first check triggers one rewrite.
+6. **Trace and memory** — per-run JSON traces include node times and Ollama token counts. Only verified facts are stored for later retrieval.
 
 ---
 
@@ -21,6 +21,7 @@ A multi-agent research system that takes a research question, searches the web, 
 agentic-research-analyst/
 │
 ├── app.py                        # Streamlit UI and pipeline orchestration
+├── workflow.py                   # LangGraph nodes, routing, retrieval, checks, traces
 ├── memory.py                     # Persistent JSON-based memory store
 ├── pyproject.toml                # Dependencies (managed with UV)
 │
@@ -41,6 +42,8 @@ agentic-research-analyst/
 │
 ├── rag/
 │   └── vector_store.py           # ChromaDB with local nomic-embed-text embeddings
+├── tests/
+│   └── test_workflow.py          # Evidence checks and graph-routing tests
 │
 └── examples/
     └── sample_report.txt         # Example output from one run
@@ -55,7 +58,7 @@ agentic-research-analyst/
 - The following models pulled in Ollama:
 
 ```
-ollama pull phi3:mini       # local model used by all four agents
+ollama pull phi3:mini         # local model used by the graph
 ollama pull nomic-embed-text  # local embeddings for RAG
 ```
 
@@ -72,7 +75,7 @@ cd Agentic-Research-Analyst-by-Ollama
 pip install uv
 
 # 3. Create venv and install dependencies
-uv sync
+uv sync --extra dev
 
 # 4. Set Ollama's default context window, then start the server.
 #    Ollama's documented server variable is OLLAMA_CONTEXT_LENGTH.
@@ -110,44 +113,44 @@ streamlit run app.py
 
 | Agent      | Model              | Why                                            |
 | ---------- | ------------------ | ---------------------------------------------- |
-| Planner    | `phi3:mini`        | Local Ollama model                             |
-| Researcher | `phi3:mini`        | Local Ollama model                             |
-| Critic     | `phi3:mini`        | Local Ollama model                             |
-| Reporter   | `phi3:mini`        | Local Ollama model                             |
-| Embeddings | `nomic-embed-text` | Local semantic embeddings, no API key needed   |
+| Graph nodes | `phi3:mini` | Local structured planning, fact extraction, critique, and report generation |
+| Embeddings | `nomic-embed-text` | Local semantic retrieval |
 
 ---
 
 ## Key design decisions
 
-**Why pre-fetch content instead of tool calling?** The v1 workflow fetches web content before CrewAI starts and passes that content into the tasks. This keeps web access in application code instead of relying on model tool calls.
+**Why a graph instead of a fixed sequence?** The critic can send the graph back to search when it finds evidence gaps. Search rounds and report rewrites have hard limits so the workflow terminates.
 
-**Why local embeddings for RAG?** CrewAI's built-in memory (`memory=True`) defaults to OpenAI embeddings. Using `nomic-embed-text` via Ollama achieves the same semantic retrieval with no external API dependency. Scraped content is chunked at 300 words with 30-word overlap and embedded into ChromaDB on each run.
+**Why local embeddings for RAG?** `nomic-embed-text` via Ollama keeps retrieval local. Pages are split into 280-word chunks with 30-word overlap. Each run has a separate persistent Chroma collection so page chunks do not leak across queries.
 
-**Why persistent JSON memory?** The original in-memory list reset on every browser refresh. The JSON store writes each report to disk with a timestamp and query label, so follow-up context survives restarts. A **Clear Memory** button in the UI wipes the file for fresh sessions.
+**What does quote verification establish?** It establishes that an extracted quote appears in a retrieved chunk after whitespace normalization. It does not prove that the source is correct or that the quote logically supports the model's claim.
 
 **Why raise the context window to 16384?** The default Ollama context window is 4096 tokens. Research prompts with scraped content regularly exceed this, causing 600s timeouts. Setting `OLLAMA_CONTEXT_LENGTH=16384` gives the model 4× the room without needing to cut content as aggressively.
 
-**Why phi3:mini for all four agents?** It is already installed locally on the target machine, so the v1 workflow can run without a large model download. Its smaller size can reduce output quality; treat its reports as drafts and verify claims against their sources.
+The per-request context size defaults to 8192 tokens and can be changed with `RESEARCH_NUM_CTX`. Each Ollama request sends `num_ctx` explicitly.
+
+Chroma embedding requests are split into batches of 8 and use a 120-second timeout by default. Change the timeout with `RESEARCH_EMBED_TIMEOUT` if needed.
 
 ---
 
 ## Limitations
 
-- The small local model can produce unsupported claims; verify reports against their sources
-- Paywalled sites (Reuters, Bloomberg, WSJ) return empty content — pipeline falls back to DuckDuckGo snippets
-- Google Drive export requires an Anthropic API key with active credits
-- ChromaDB runs in-memory within each session — embeddings do not persist across server restarts
-- Local inference on CPU takes 2–3 minutes per full run
+- Automated quote and citation checks reduce some errors but do not prove factual correctness; review claims against the linked pages.
+- Search snippets can be used when a page cannot be retrieved and are weaker evidence than the full page.
+- The number check is string-based and can flag formatting differences.
+- The integrated live search, page extraction, Chroma, and Ollama flow has not yet been verified after this rebuild.
+- Multiple search rounds and local inference can take several minutes, especially on CPU.
 
 ---
 
 ## Built with
 
 - [Streamlit](https://streamlit.io) — UI
-- [CrewAI](https://www.crewai.com) — multi-agent orchestration
+- [LangGraph](https://langchain-ai.github.io/langgraph/) — graph orchestration with bounded routing
 - [Ollama](https://ollama.com) — local LLM inference
 - [ChromaDB](https://www.trychroma.com) — vector store for RAG
 - [ddgs](https://pypi.org/project/ddgs/) — DuckDuckGo search
 - [BeautifulSoup4](https://pypi.org/project/beautifulsoup4/) — web scraping
+- [Trafilatura](https://pypi.org/project/trafilatura/) — article text extraction
 - [UV](https://github.com/astral-sh/uv) — package management
