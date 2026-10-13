@@ -12,7 +12,7 @@ def make_planner():
         ),
         tools=[],
         verbose=True,
-        llm="ollama/mistral"
+        llm="ollama/phi3:mini"
     )
 
 
@@ -32,7 +32,7 @@ def make_researcher():
         ),
         tools=[],
         verbose=True,
-        llm="ollama/llama3.1"
+        llm="ollama/phi3:mini"
     )
 
 
@@ -51,7 +51,7 @@ def make_critic():
         ),
         tools=[],
         verbose=True,
-        llm="ollama/llama3.1"
+        llm="ollama/phi3:mini"
     )
 
 
@@ -71,5 +71,5 @@ def make_reporter():
         ),
         tools=[],
         verbose=True,
-        llm="ollama/mistral"
+        llm="ollama/phi3:mini"
     )

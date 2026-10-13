@@ -55,8 +55,7 @@ agentic-research-analyst/
 - The following models pulled in Ollama:
 
 ```
-ollama pull llama3.1        # researcher and critic (better tool-use than llama3)
-ollama pull mistral         # planner and reporter (reliable structured output)
+ollama pull phi3:mini       # local model used by all four agents
 ollama pull nomic-embed-text  # local embeddings for RAG
 ```
 
@@ -111,17 +110,17 @@ streamlit run app.py
 
 | Agent      | Model              | Why                                            |
 | ---------- | ------------------ | ---------------------------------------------- |
-| Planner    | `mistral`          | Reliable structured output and JSON formatting |
-| Researcher | `llama3.1`         | Better tool-use support than base llama3       |
-| Critic     | `llama3.1`         | Stronger analytical reasoning                  |
-| Reporter   | `mistral`          | Consistent structured report formatting        |
+| Planner    | `phi3:mini`        | Local Ollama model                             |
+| Researcher | `phi3:mini`        | Local Ollama model                             |
+| Critic     | `phi3:mini`        | Local Ollama model                             |
+| Reporter   | `phi3:mini`        | Local Ollama model                             |
 | Embeddings | `nomic-embed-text` | Local semantic embeddings, no API key needed   |
 
 ---
 
 ## Key design decisions
 
-**Why pre-fetch content instead of tool calling?** Local models (llama3, mistral) misformat tool call arguments when used via CrewAI, causing repeated failures. Web content is fetched and scraped before the crew starts, then passed directly into the task. llama3.1 has improved tool-use support and may restore autonomous tool calling — swap it in and test if needed.
+**Why pre-fetch content instead of tool calling?** The v1 workflow fetches web content before CrewAI starts and passes that content into the tasks. This keeps web access in application code instead of relying on model tool calls.
 
 **Why local embeddings for RAG?** CrewAI's built-in memory (`memory=True`) defaults to OpenAI embeddings. Using `nomic-embed-text` via Ollama achieves the same semantic retrieval with no external API dependency. Scraped content is chunked at 300 words with 30-word overlap and embedded into ChromaDB on each run.
 
@@ -129,13 +128,13 @@ streamlit run app.py
 
 **Why raise the context window to 16384?** The default Ollama context window is 4096 tokens. Research prompts with scraped content regularly exceed this, causing 600s timeouts. Setting `OLLAMA_CONTEXT_LENGTH=16384` gives the model 4× the room without needing to cut content as aggressively.
 
-**Why mistral for the reporter?** Mistral follows structured format instructions more consistently than llama3 for the final report. llama3 tends to leak chain-of-thought prefixes (`"I now can give a great answer"`) as its output — mistral produces clean structured text.
+**Why phi3:mini for all four agents?** It is already installed locally on the target machine, so the v1 workflow can run without a large model download. Its smaller size can reduce output quality; treat its reports as drafts and verify claims against their sources.
 
 ---
 
 ## Limitations
 
-- Tool calling is unreliable with base llama3/mistral — llama3.1 improves this but GPT-4 handles it most reliably
+- The small local model can produce unsupported claims; verify reports against their sources
 - Paywalled sites (Reuters, Bloomberg, WSJ) return empty content — pipeline falls back to DuckDuckGo snippets
 - Google Drive export requires an Anthropic API key with active credits
 - ChromaDB runs in-memory within each session — embeddings do not persist across server restarts
