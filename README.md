@@ -1,6 +1,6 @@
-# Local Research Analyst
+# Gemini Research Analyst
 
-A local Ollama research prototype that plans web searches, extracts claims with source quotes, asks a critic to find gaps, and writes a cited report. Automated checks reduce some errors but do not prove that a report is true.
+A Gemini API research prototype that plans web searches, extracts claims with source quotes, asks a critic to find gaps, and writes a cited report. Search and page retrieval use the web; prompts and retrieved source text are sent to Google's Gemini API. Automated checks reduce some errors but do not prove that a report is true.
 
 ---
 
@@ -8,10 +8,10 @@ A local Ollama research prototype that plans web searches, extracts claims with 
 
 1. **Clarify and plan** — vague queries can end with a question; specific queries become searchable sub-questions.
 2. **Search and retrieve** — search results are cached, pages are checked against `robots.txt`, and text is indexed in a per-run Chroma collection.
-3. **Extract evidence** — Ollama returns claims with source IDs and exact quotes; code drops quotes absent from retrieved text.
+3. **Extract evidence** — Gemini returns claims with source IDs and exact quotes; code drops quotes absent from retrieved text.
 4. **Critique loop** — the critic can request up to two additional search rounds.
 5. **Write and check** — code checks source IDs, headings, quote-backed claims, and numbers. A failed first check triggers one rewrite.
-6. **Trace and memory** — per-run JSON traces include node times and Ollama token counts. Only verified facts are stored for later retrieval.
+6. **Trace and memory** — per-run JSON traces include node times and Gemini token counts. Only verified facts are stored for later retrieval.
 
 ---
 
@@ -35,13 +35,13 @@ agentic-research-analyst/
 │   └── search_agent.py           # DuckDuckGo search and result ranking
 │
 ├── utils/
-│   ├── ollama_client.py          # Shared Ollama wrapper
+│   ├── ollama_client.py          # Legacy Ollama wrapper (not used by Day 3 graph)
 │   ├── web_scraper.py            # BeautifulSoup page scraper
 │   ├── json_parser.py            # Safe JSON parsing with retry
 │   └── drive_saver.py            # Google Drive export via Anthropic MCP
 │
 ├── rag/
-│   └── vector_store.py           # ChromaDB with local nomic-embed-text embeddings
+│   └── vector_store.py           # Legacy vector-store code
 ├── tests/
 │   └── test_workflow.py          # Evidence checks and graph-routing tests
 │
@@ -54,13 +54,11 @@ agentic-research-analyst/
 ## Requirements
 
 - Python 3.12+
-- [Ollama](https://ollama.com) running locally
-- The following models pulled in Ollama:
+- A Gemini API key in `GEMINI_API_KEY`
+- Internet access for search and Gemini API calls
+- Gemini models default to `gemini-2.5-flash` and `gemini-embedding-001`; override with `GEMINI_MODEL` and `GEMINI_EMBED_MODEL`
 
-```
-ollama pull phi3:mini         # local model used by the graph
-ollama pull nomic-embed-text  # local embeddings for RAG
-```
+Gemini calls send the query, retrieved web-source text, and embedding inputs to Google's API. Do not enter sensitive or confidential material.
 
 ---
 
@@ -77,15 +75,10 @@ pip install uv
 # 3. Create venv and install dependencies
 uv sync --extra dev
 
-# 4. Set Ollama's default context window, then start the server.
-#    Ollama's documented server variable is OLLAMA_CONTEXT_LENGTH.
-#    If the Ollama desktop app is already running, quit it first, or set the
-#    variable permanently in your system environment variables and restart Ollama.
-#    cmd:         set OLLAMA_CONTEXT_LENGTH=16384
-#    PowerShell:  $env:OLLAMA_CONTEXT_LENGTH=16384
-ollama serve
+# 4. Set your Gemini API key in PowerShell for this terminal session.
+$env:GEMINI_API_KEY = "your-key-here"
 
-# 5. Run the app in a second terminal
+# 5. Start the app in this same terminal so it inherits the API key
 streamlit run app.py
 ```
 
@@ -113,8 +106,8 @@ streamlit run app.py
 
 | Agent      | Model              | Why                                            |
 | ---------- | ------------------ | ---------------------------------------------- |
-| Graph nodes | `phi3:mini` | Local structured planning, fact extraction, critique, and report generation |
-| Embeddings | `nomic-embed-text` | Local semantic retrieval |
+| Graph nodes | `gemini-2.5-flash` | Structured planning, fact extraction, critique, and report generation through Gemini API |
+| Embeddings | `gemini-embedding-001` | Semantic retrieval through Gemini API |
 
 ---
 
@@ -122,15 +115,11 @@ streamlit run app.py
 
 **Why a graph instead of a fixed sequence?** The critic can send the graph back to search when it finds evidence gaps. Search rounds and report rewrites have hard limits so the workflow terminates.
 
-**Why local embeddings for RAG?** `nomic-embed-text` via Ollama keeps retrieval local. Pages are split into 280-word chunks with 30-word overlap. Each run has a separate persistent Chroma collection so page chunks do not leak across queries.
+**Why embeddings for RAG?** `gemini-embedding-001` maps source chunks and questions to vectors used for semantic retrieval. Pages are split into 280-word chunks with 30-word overlap. Each run has a separate persistent Chroma collection so page chunks do not leak across queries. Source chunks and queries are sent to the Gemini API for embeddings.
 
 **What does quote verification establish?** It establishes that an extracted quote appears in a retrieved chunk after whitespace normalization. It does not prove that the source is correct or that the quote logically supports the model's claim.
 
-**Why raise the context window to 16384?** The default Ollama context window is 4096 tokens. Research prompts with scraped content regularly exceed this, causing 600s timeouts. Setting `OLLAMA_CONTEXT_LENGTH=16384` gives the model 4× the room without needing to cut content as aggressively.
-
-The per-request context size defaults to 8192 tokens and can be changed with `RESEARCH_NUM_CTX`. Each Ollama request sends `num_ctx` explicitly.
-
-Chroma embedding requests are split into batches of 8 and use a 120-second timeout by default. Change the timeout with `RESEARCH_EMBED_TIMEOUT` if needed.
+Gemini handles inference remotely, so local CPU inference speed is no longer the bottleneck. API availability, quota, network latency, and service limits still apply. Embedding requests are split into batches of 8.
 
 ---
 
@@ -139,8 +128,8 @@ Chroma embedding requests are split into batches of 8 and use a 120-second timeo
 - Automated quote and citation checks reduce some errors but do not prove factual correctness; review claims against the linked pages.
 - Search snippets can be used when a page cannot be retrieved and are weaker evidence than the full page.
 - The number check is string-based and can flag formatting differences.
-- The integrated live search, page extraction, Chroma, and Ollama flow has not yet been verified after this rebuild.
-- Multiple search rounds and local inference can take several minutes, especially on CPU.
+- The integrated live search, page extraction, Chroma, and Gemini flow must be verified with a configured API key.
+- Reports can contain errors even when automated citation and quote checks pass.
 
 ---
 
@@ -148,7 +137,7 @@ Chroma embedding requests are split into batches of 8 and use a 120-second timeo
 
 - [Streamlit](https://streamlit.io) — UI
 - [LangGraph](https://langchain-ai.github.io/langgraph/) — graph orchestration with bounded routing
-- [Ollama](https://ollama.com) — local LLM inference
+- [Google Gemini API](https://ai.google.dev/gemini-api/docs) — text generation and embeddings
 - [ChromaDB](https://www.trychroma.com) — vector store for RAG
 - [ddgs](https://pypi.org/project/ddgs/) — DuckDuckGo search
 - [BeautifulSoup4](https://pypi.org/project/beautifulsoup4/) — web scraping

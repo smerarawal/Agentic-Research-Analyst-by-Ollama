@@ -3,15 +3,16 @@ import streamlit as st
 from workflow import MODEL, run_research
 
 
-st.set_page_config(page_title="Local Research Analyst", layout="wide")
-st.title("Local Research Analyst")
-st.caption(f"Ollama model: `{MODEL}` · LangGraph workflow · evidence-checked citations")
+st.set_page_config(page_title="Gemini Research Analyst", layout="wide")
+st.title("Research Analyst")
+st.caption(f"Gemini API model: `{MODEL}` · LangGraph workflow · evidence-checked citations")
+st.info("This version sends your query, retrieved web-source passages, and embedding inputs to the Google Gemini API. Do not submit sensitive or confidential information.")
 st.write("Enter a focused research query. The planner creates sub-questions, the critic can request another search round, and code checks quotes and citations before showing the report.")
 
 query = st.text_input("Research query", placeholder="NVIDIA Blackwell GPU deployments and announced customer systems, 2024–2025")
 
 if st.button("Run research", type="primary", disabled=not query.strip()):
-    with st.spinner("Researching with local Ollama models…"):
+    with st.spinner("Researching with Gemini…"):
         try:
             result = run_research(query.strip())
         except Exception as exc:

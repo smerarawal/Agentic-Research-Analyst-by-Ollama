@@ -96,14 +96,77 @@ def test_indexing_batches_documents(monkeypatch):
         def __init__(self):
             self.batch_sizes = []
 
-        def add(self, documents, ids, metadatas):
+        def upsert(self, documents, ids, metadatas, embeddings):
             self.batch_sizes.append(len(documents))
-            assert len(documents) == len(ids) == len(metadatas)
+            assert len(documents) == len(ids) == len(metadatas) == len(embeddings)
 
     collection = Collection()
     monkeypatch.setattr(workflow, "_get_collection", lambda _name: (None, collection))
+    monkeypatch.setattr(workflow, "_gemini_embed", lambda texts: [[0.0] for _ in texts])
     text = " ".join(f"word{i}" for i in range(3000))
     _index_sources("test-run", {1: {"url": "https://example.com", "title": "Example", "text": text}})
     assert len(collection.batch_sizes) > 1
     assert max(collection.batch_sizes) <= 8
+
+
+def test_gemini_structured_generation_uses_api_schema(monkeypatch):
+    from types import SimpleNamespace
+    import workflow
+
+    calls = {}
+
+    class Models:
+        def generate_content(self, **kwargs):
+            calls.update(kwargs)
+            return SimpleNamespace(
+                text='{"specific": true, "question": ""}',
+                usage_metadata=SimpleNamespace(prompt_token_count=7, candidates_token_count=4),
+            )
+
+    class Client:
+        def __init__(self, api_key):
+            calls["api_key"] = api_key
+            self.models = Models()
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(workflow.genai, "Client", Client)
+    workflow._gemini_client.cache_clear()
+    try:
+        parsed, usage = workflow._chat_json("Is this query specific?", workflow.Clarification)
+    finally:
+        workflow._gemini_client.cache_clear()
+
+    assert parsed.specific is True
+    assert calls["model"] == workflow.MODEL
+    assert calls["config"].response_mime_type == "application/json"
+    assert calls["api_key"] == "test-key"
+    assert usage == {"prompt_eval_count": 7, "eval_count": 4}
+
+
+def test_gemini_embeddings_return_vectors(monkeypatch):
+    from types import SimpleNamespace
+    import workflow
+
+    seen = {}
+
+    class Models:
+        def embed_content(self, **kwargs):
+            seen.update(kwargs)
+            return SimpleNamespace(embeddings=[SimpleNamespace(values=[0.1, 0.2])])
+
+    class Client:
+        def __init__(self, api_key):
+            self.models = Models()
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(workflow.genai, "Client", Client)
+    workflow._gemini_client.cache_clear()
+    try:
+        vectors = workflow._gemini_embed(["one text"])
+    finally:
+        workflow._gemini_client.cache_clear()
+
+    assert vectors == [[0.1, 0.2]]
+    assert seen["model"] == workflow.EMBED_MODEL
+    assert seen["contents"] == ["one text"]
 
