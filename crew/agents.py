@@ -32,7 +32,7 @@ def make_researcher():
         ),
         tools=[],
         verbose=True,
-        llm="ollama/llama3"
+        llm="ollama/llama3.1"
     )
 
 
@@ -51,7 +51,7 @@ def make_critic():
         ),
         tools=[],
         verbose=True,
-        llm="ollama/llama3"
+        llm="ollama/llama3.1"
     )
 
 
@@ -71,5 +71,5 @@ def make_reporter():
         ),
         tools=[],
         verbose=True,
-        llm="ollama/mistral"  
+        llm="ollama/mistral"
     )

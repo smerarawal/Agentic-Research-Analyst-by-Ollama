@@ -33,8 +33,8 @@ st.write(
     - CrewAI agent orchestration
     - RAG with local embeddings (nomic-embed-text)
     - Persistent memory across sessions
-    - A2A communication via task context
-    """ 
+    - Task context passed between agents (CrewAI)
+    """
 )
 
 # context

@@ -1,3 +1,4 @@
+import re
 from ddgs import DDGS
 
 def search_web(query, max_results=5):
@@ -78,8 +79,10 @@ def search_web(query, max_results=5):
                 "infrastructure"
             ]
 
+            # Whole-word match: a plain `word in combined` test matched "ai"
+            # inside words like "said" or "email".
             if any(
-                word in combined
+                re.search(rf"\b{re.escape(word)}\b", combined)
                 for word in important_keywords
             ):
                 score += 2

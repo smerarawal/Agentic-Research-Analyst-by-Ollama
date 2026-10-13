@@ -30,7 +30,8 @@ agentic-research-analyst/
 │   └── research_crew.py          # Crew orchestration and web fetch
 │
 ├── agents/
-│   └── clarification_agent.py    # Blocks vague queries before crew runs
+│   ├── clarification_agent.py    # Blocks vague queries before crew runs
+│   └── search_agent.py           # DuckDuckGo search and result ranking
 │
 ├── utils/
 │   ├── ollama_client.py          # Shared Ollama wrapper
@@ -38,8 +39,11 @@ agentic-research-analyst/
 │   ├── json_parser.py            # Safe JSON parsing with retry
 │   └── drive_saver.py            # Google Drive export via Anthropic MCP
 │
-└── rag/
-    └── vector_store.py           # ChromaDB with local nomic-embed-text embeddings
+├── rag/
+│   └── vector_store.py           # ChromaDB with local nomic-embed-text embeddings
+│
+└── examples/
+    └── sample_report.txt         # Example output from one run
 ```
 
 ---
@@ -50,7 +54,7 @@ agentic-research-analyst/
 - [Ollama](https://ollama.com) running locally
 - The following models pulled in Ollama:
 
-```bash
+```
 ollama pull llama3.1        # researcher and critic (better tool-use than llama3)
 ollama pull mistral         # planner and reporter (reliable structured output)
 ollama pull nomic-embed-text  # local embeddings for RAG
@@ -60,10 +64,10 @@ ollama pull nomic-embed-text  # local embeddings for RAG
 
 ## Setup
 
-```bash
+```
 # 1. Clone the repo
-git clone https://github.com/your-username/agentic-research-analyst
-cd agentic-research-analyst
+git clone https://github.com/smerarawal/Agentic-Research-Analyst-by-Ollama
+cd Agentic-Research-Analyst-by-Ollama
 
 # 2. Install UV if you don't have it
 pip install uv
@@ -71,14 +75,15 @@ pip install uv
 # 3. Create venv and install dependencies
 uv sync
 
-# 4. Set Ollama context window (run before ollama serve every time,
-#    or set permanently in Windows system environment variables)
-set OLLAMA_NUM_CTX=16384
-
-# 5. Start Ollama in one terminal
+# 4. Set Ollama's default context window, then start the server.
+#    Ollama's documented server variable is OLLAMA_CONTEXT_LENGTH.
+#    If the Ollama desktop app is already running, quit it first, or set the
+#    variable permanently in your system environment variables and restart Ollama.
+#    cmd:         set OLLAMA_CONTEXT_LENGTH=16384
+#    PowerShell:  $env:OLLAMA_CONTEXT_LENGTH=16384
 ollama serve
 
-# 6. Run the app in a second terminal
+# 5. Run the app in a second terminal
 streamlit run app.py
 ```
 
@@ -94,42 +99,37 @@ streamlit run app.py
 
 ### Query tips
 
-| Too vague — will be blocked | Specific enough — will run |
-|---|---|
-| `analyze NVIDIA` | `NVIDIA Blackwell GPU data center deployment 2024` |
-| `research Apple` | `Apple Vision Pro enterprise adoption and competitor comparison` |
-| `study Tesla` | `Tesla FSD regulatory approval timeline and safety record` |
+| Too vague — will be blocked | Specific enough — will run                                       |
+| --------------------------- | ---------------------------------------------------------------- |
+| `analyze NVIDIA`            | `NVIDIA Blackwell GPU data center deployment 2024`               |
+| `research Apple`            | `Apple Vision Pro enterprise adoption and competitor comparison` |
+| `study Tesla`               | `Tesla FSD regulatory approval timeline and safety record`       |
 
 ---
 
 ## Models and roles
 
-| Agent | Model | Why |
-|---|---|---|
-| Planner | `mistral` | Reliable structured output and JSON formatting |
-| Researcher | `llama3.1` | Better tool-use support than base llama3 |
-| Critic | `llama3.1` | Stronger analytical reasoning |
-| Reporter | `mistral` | Consistent structured report formatting |
-| Embeddings | `nomic-embed-text` | Local semantic embeddings, no API key needed |
+| Agent      | Model              | Why                                            |
+| ---------- | ------------------ | ---------------------------------------------- |
+| Planner    | `mistral`          | Reliable structured output and JSON formatting |
+| Researcher | `llama3.1`         | Better tool-use support than base llama3       |
+| Critic     | `llama3.1`         | Stronger analytical reasoning                  |
+| Reporter   | `mistral`          | Consistent structured report formatting        |
+| Embeddings | `nomic-embed-text` | Local semantic embeddings, no API key needed   |
 
 ---
 
 ## Key design decisions
 
-**Why pre-fetch content instead of tool calling?**
-Local models (llama3, mistral) misformat tool call arguments when used via CrewAI, causing repeated failures. Web content is fetched and scraped before the crew starts, then passed directly into the task. llama3.1 has improved tool-use support and may restore autonomous tool calling — swap it in and test if needed.
+**Why pre-fetch content instead of tool calling?** Local models (llama3, mistral) misformat tool call arguments when used via CrewAI, causing repeated failures. Web content is fetched and scraped before the crew starts, then passed directly into the task. llama3.1 has improved tool-use support and may restore autonomous tool calling — swap it in and test if needed.
 
-**Why local embeddings for RAG?**
-CrewAI's built-in memory (`memory=True`) defaults to OpenAI embeddings. Using `nomic-embed-text` via Ollama achieves the same semantic retrieval with no external API dependency. Scraped content is chunked at 300 words with 30-word overlap and embedded into ChromaDB on each run.
+**Why local embeddings for RAG?** CrewAI's built-in memory (`memory=True`) defaults to OpenAI embeddings. Using `nomic-embed-text` via Ollama achieves the same semantic retrieval with no external API dependency. Scraped content is chunked at 300 words with 30-word overlap and embedded into ChromaDB on each run.
 
-**Why persistent JSON memory?**
-The original in-memory list reset on every browser refresh. The JSON store writes each report to disk with a timestamp and query label, so follow-up context survives restarts. A **Clear Memory** button in the UI wipes the file for fresh sessions.
+**Why persistent JSON memory?** The original in-memory list reset on every browser refresh. The JSON store writes each report to disk with a timestamp and query label, so follow-up context survives restarts. A **Clear Memory** button in the UI wipes the file for fresh sessions.
 
-**Why OLLAMA_NUM_CTX=16384?**
-The default Ollama context window is 4096 tokens. Research prompts with scraped content regularly exceed this, causing 600s timeouts. Setting 16384 gives the model 4× the room without needing to cut content as aggressively.
+**Why raise the context window to 16384?** The default Ollama context window is 4096 tokens. Research prompts with scraped content regularly exceed this, causing 600s timeouts. Setting `OLLAMA_CONTEXT_LENGTH=16384` gives the model 4× the room without needing to cut content as aggressively.
 
-**Why mistral for the reporter?**
-Mistral follows structured format instructions more consistently than llama3 for the final report. llama3 tends to leak chain-of-thought prefixes (`"I now can give a great answer"`) as its output — mistral produces clean structured text.
+**Why mistral for the reporter?** Mistral follows structured format instructions more consistently than llama3 for the final report. llama3 tends to leak chain-of-thought prefixes (`"I now can give a great answer"`) as its output — mistral produces clean structured text.
 
 ---
 
@@ -151,14 +151,4 @@ Mistral follows structured format instructions more consistently than llama3 for
 - [ChromaDB](https://www.trychroma.com) — vector store for RAG
 - [ddgs](https://pypi.org/project/ddgs/) — DuckDuckGo search
 - [BeautifulSoup4](https://pypi.org/project/beautifulsoup4/) — web scraping
-- [UV](https://github.com/astral-sh/uv) — package management
-
-## Built with
-
-- [Streamlit](https://streamlit.io) — UI
-- [Ollama](https://ollama.com) — local LLM inference
-- [ChromaDB](https://www.trychroma.com) — vector store for RAG
-- [ddgs](https://pypi.org/project/ddgs/) — DuckDuckGo search
-- [BeautifulSoup4](https://pypi.org/project/beautifulsoup4/) — web scraping
-- [LangGraph](https://langchain-ai.github.io/langgraph/) — agent workflow orchestration
 - [UV](https://github.com/astral-sh/uv) — package management
